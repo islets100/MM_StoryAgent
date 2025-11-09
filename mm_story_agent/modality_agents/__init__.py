@@ -5,6 +5,8 @@ from ..utils.import_utils import _LazyModule
 _import_structure = {
     'story_agent': [
         'QAOutlineStoryWriter',
+        'DataBasedStoryWriter',
+        'UnifiedStoryWriter',
     ],
     'music_agent': [
         'MusicGenAgent'

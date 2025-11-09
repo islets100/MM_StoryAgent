@@ -11,7 +11,9 @@ from .base import init_tool_instance
 class MMStoryAgent:
 
     def __init__(self) -> None:
-        self.modalities = ["image", "sound", "speech", "music"]
+        # 临时禁用 speech，避免需要阿里云 API 凭证
+        # 如需启用语音，请先设置环境变量：.\setup_env.ps1
+        self.modalities = ["image"]  # 原来是 ["image", "speech"]
 
     def call_modality_agent(self, modality, agent, params, return_dict):
         result = agent.call(params)
@@ -86,4 +88,9 @@ class MMStoryAgent:
     def call(self, config):
         pages = self.write_story(config)
         images = self.generate_modality_assets(config, pages)
+        # 启用视频合成
         self.compose_storytelling_video(config, pages)
+        print("\n" + "="*60)
+        print("✅ 故事生成、图像生成和视频合成完成！")
+        print("📁 输出目录:", config.get("story_dir", "generated_stories/example"))
+        print("="*60)

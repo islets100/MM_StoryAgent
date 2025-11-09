@@ -2,6 +2,10 @@ from typing import List, Dict
 import json
 import os
 import random
+import time
+import requests
+from io import BytesIO
+from PIL import Image as PILImage
 
 import numpy as np
 import torch
@@ -573,6 +577,205 @@ class StoryDiffusionSynthesizer:
         return images
 
 
+class DashScopeImageGenerator:
+    """
+    使用 DashScope API (通义万相) 生成图像的类
+    """
+    
+    def __init__(self, api_key: str = None):
+        """
+        初始化 DashScope 图像生成器
+        
+        Args:
+            api_key: DashScope API Key，如果为 None 则从环境变量读取
+        """
+        self.api_key = api_key or os.environ.get('DASHSCOPE_API_KEY')
+        if not self.api_key:
+            raise ValueError("DashScope API key not found. Please set DASHSCOPE_API_KEY environment variable.")
+        
+        self.api_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
+        
+        # 风格模板（与 StoryDiffusionSynthesizer 保持一致）
+        self.styles = {
+            '(No style)': ('{prompt}', ''),
+            'Japanese Anime': (
+                'anime artwork illustrating {prompt}. created by japanese anime studio. highly emotional. best quality, high resolution',
+                'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality'),
+            'Digital/Oil Painting': (
+                '{prompt} . Extremely Detailed Oil Painting, glow effects, godrays, Hand drawn, render, 8k',
+                'anime, cartoon, graphic, text, painting, crayon, graphite, abstract, glitch, deformed, mutated, ugly, disfigured'),
+            'Pixar/Disney Character': (
+                'Create a Disney Pixar 3D style illustration on {prompt} . The scene is vibrant, motivational, filled with vivid colors',
+                'lowres, bad anatomy, bad hands, text, bad eyes, bad arms, bad legs, error, missing fingers'),
+            'Photographic': (
+                'cinematic photo {prompt} . Hyperrealistic, Hyperdetailed, detailed skin, matte skin, soft lighting, realistic, best quality',
+                'drawing, painting, crayon, sketch, graphite, impressionist, noisy, blurry, soft, deformed, ugly'),
+            'Comic book': (
+                'comic {prompt} . graphic illustration, comic art, graphic novel art, vibrant, highly detailed',
+                'photograph, deformed, glitch, noisy, realistic, stock photo'),
+            'Line art': (
+                'line art drawing {prompt} . professional, sleek, modern, minimalist, graphic, line art, vector graphics',
+                'anime, photorealistic, 35mm film, deformed, glitch, blurry, noisy'),
+            'Black and White Film Noir': (
+                '{prompt} . b&w, Monochromatic, Film Photography, film noir, analog style, soft lighting',
+                'anime, photorealistic, 35mm film, deformed, glitch, blurry, noisy'),
+            'Isometric Rooms': (
+                'Tiny cute isometric {prompt} . in a cutaway box, soft smooth lighting, soft colors, 100mm lens, 3d blender render',
+                'anime, photorealistic, 35mm film, deformed, glitch, blurry, noisy'),
+            'Storybook': (
+                "Cartoon style, cute illustration of {prompt}.",
+                'realism, photo, realistic, lowres, bad hands, bad eyes, bad arms, bad legs, error, missing fingers'
+            )
+        }
+        
+        self.negative_prompt = "naked, deformed, bad anatomy, disfigured, poorly drawn face, mutation, " \
+                               "extra limb, ugly, disgusting, poorly drawn hands, missing limb, floating " \
+                               "limbs, disconnected limbs, blurry, watermarks, oversaturated, distorted hands"
+    
+    def _map_size(self, height: int, width: int) -> str:
+        """将任意尺寸映射到 DashScope 支持的尺寸"""
+        if width == height:
+            return "1024*1024"
+        elif width > height:
+            return "1280*720"
+        else:
+            return "720*1280"
+    
+    def apply_style(self, style_name: str, prompt: str) -> str:
+        """应用风格模板到 prompt"""
+        style_template, _ = self.styles.get(style_name, self.styles["(No style)"])
+        return style_template.replace("{prompt}", prompt)
+    
+    def generate_image(self, prompt: str, style_name: str = "Storybook", 
+                      height: int = 512, width: int = 512, seed: int = 2047) -> PILImage.Image:
+        """
+        生成单张图像
+        
+        Args:
+            prompt: 图像描述文本
+            style_name: 风格名称
+            height: 图像高度
+            width: 图像宽度
+            seed: 随机种子
+            
+        Returns:
+            PIL Image 对象
+        """
+        # 应用风格
+        styled_prompt = self.apply_style(style_name, prompt)
+        size = self._map_size(height, width)
+        
+        print(f"🎨 生成图像...")
+        print(f"   Prompt: {prompt[:80]}...")
+        print(f"   Style: {style_name}")
+        print(f"   Size: {size}")
+        
+        # 提交任务
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Content-Type': 'application/json',
+            'X-DashScope-Async': 'enable'
+        }
+        
+        payload = {
+            "model": "wanx-v1",
+            "input": {
+                "prompt": styled_prompt,
+                "negative_prompt": self.negative_prompt
+            },
+            "parameters": {
+                "size": size,
+                "n": 1,
+                "seed": seed
+            }
+        }
+        
+        try:
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get('code'):
+                raise RuntimeError(f"DashScope API error: {result.get('message', 'Unknown error')}")
+            
+            task_id = result['output']['task_id']
+            print(f"   ✅ 任务已提交: {task_id}")
+            
+            # 轮询任务状态
+            task_url = f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
+            max_retries = 60
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                time.sleep(5)
+                
+                response = requests.get(task_url, headers=headers, timeout=30)
+                response.raise_for_status()
+                result = response.json()
+                
+                task_status = result['output']['task_status']
+                
+                if task_status == 'SUCCEEDED':
+                    image_url = result['output']['results'][0]['url']
+                    print(f"   ✅ 图像生成成功")
+                    
+                    # 下载图像
+                    img_response = requests.get(image_url, timeout=30)
+                    img_response.raise_for_status()
+                    image = PILImage.open(BytesIO(img_response.content))
+                    return image
+                    
+                elif task_status == 'FAILED':
+                    error_msg = result['output'].get('message', 'Unknown error')
+                    raise RuntimeError(f"图像生成失败: {error_msg}")
+                
+                retry_count += 1
+                print(f"   ⏳ 等待生成中... ({retry_count}/{max_retries})")
+            
+            raise TimeoutError("图像生成超时（5分钟）")
+            
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"API 请求失败: {str(e)}")
+    
+    def generate_images(self, prompts: List[str], style_name: str = "Storybook",
+                       height: int = 512, width: int = 512, seed: int = 2047) -> List[PILImage.Image]:
+        """
+        批量生成图像
+        
+        Args:
+            prompts: 图像描述文本列表
+            style_name: 风格名称
+            height: 图像高度
+            width: 图像宽度
+            seed: 随机种子
+            
+        Returns:
+            PIL Image 对象列表
+        """
+        images = []
+        print(f"\n🎨 开始批量生成图像")
+        print(f"   总数: {len(prompts)}")
+        print(f"   风格: {style_name}")
+        
+        for idx, prompt in enumerate(prompts):
+            print(f"\n📝 [{idx + 1}/{len(prompts)}]")
+            try:
+                image = self.generate_image(
+                    prompt=prompt,
+                    style_name=style_name,
+                    height=height,
+                    width=width,
+                    seed=seed + idx  # 每张图使用不同的种子
+                )
+                images.append(image)
+            except Exception as e:
+                print(f"   ❌ 生成失败: {str(e)}")
+                raise
+        
+        print(f"\n✅ 所有图像生成完成！")
+        return images
+
+
 @register_tool("story_diffusion_t2i")
 class StoryDiffusionAgent:
 
@@ -582,30 +785,71 @@ class StoryDiffusionAgent:
     def call(self, params: Dict):
         pages: List = params["pages"]
         save_path: str = params["save_path"]
+        
+        # 提取角色信息和生成图像提示词
+        print("\n📝 步骤 1/3: 提取故事角色...")
         role_dict = self.extract_role_from_story(pages)
+        print(f"   提取到 {len(role_dict)} 个角色")
+        
+        print("\n📝 步骤 2/3: 生成图像描述...")
         image_prompts = self.generate_image_prompt_from_story(pages)
+        
+        # 将角色名替换为详细描述
         image_prompts_with_role_desc = []
         for image_prompt in image_prompts:
             for role, role_desc in role_dict.items():
                 if role in image_prompt:
                     image_prompt = image_prompt.replace(role, role_desc)
             image_prompts_with_role_desc.append(image_prompt)
-        generation_agent = StoryDiffusionSynthesizer(
-            num_pages=len(pages),
-            height=self.cfg.get("height", 512),
-            width=self.cfg.get("width", 512),
-            model_name=self.cfg.get("model_name", "stabilityai/stable-diffusion-xl-base-1.0"),
-            id_length=self.cfg.get("id_length", 4),
-            num_steps=self.cfg.get("num_steps", 50)
-        )
-        images = generation_agent.call(
-            image_prompts_with_role_desc,
-            style_name=params.get("style_name", "Storybook"),
-            guidance_scale=params.get("guidance_scale", 5.0),
-            seed=params.get("seed", 2047)
-        )
+        
+        # 打印调试信息
+        print("\n🔍 生成的 Prompts:")
+        for idx, prompt in enumerate(image_prompts_with_role_desc):
+            print(f"   [{idx + 1}] {prompt[:100]}...")
+        
+        # 检查是否使用 API 模式
+        use_api = self.cfg.get("use_api", False)
+        model_name = self.cfg.get("model_name", "stabilityai/stable-diffusion-xl-base-1.0")
+        
+        # 如果 model_name 是 wanx-v1，自动启用 API 模式
+        if model_name == "wanx-v1" or use_api:
+            print("\n📝 步骤 3/3: 使用 DashScope API 生成图像...")
+            # 使用 DashScope API
+            api_generator = DashScopeImageGenerator(
+                api_key=self.cfg.get("api_key")
+            )
+            images = api_generator.generate_images(
+                prompts=image_prompts_with_role_desc,
+                style_name=params.get("style_name", "Storybook"),
+                height=self.cfg.get("height", 512),
+                width=self.cfg.get("width", 512),
+                seed=params.get("seed", 2047)
+            )
+        else:
+            print("\n📝 步骤 3/3: 使用本地 Stable Diffusion 模型生成图像...")
+            # 使用本地模型
+            generation_agent = StoryDiffusionSynthesizer(
+                num_pages=len(pages),
+                height=self.cfg.get("height", 512),
+                width=self.cfg.get("width", 512),
+                model_name=model_name,
+                id_length=self.cfg.get("id_length", 4),
+                num_steps=self.cfg.get("num_steps", 50)
+            )
+            images = generation_agent.call(
+                image_prompts_with_role_desc,
+                style_name=params.get("style_name", "Storybook"),
+                guidance_scale=params.get("guidance_scale", 5.0),
+                seed=params.get("seed", 2047)
+            )
+        
+        # 保存图像
+        print(f"\n💾 保存图像到: {save_path}")
         for idx, image in enumerate(images):
-            image.save(save_path / f"p{idx + 1}.png")
+            image_path = save_path / f"p{idx + 1}.png"
+            image.save(image_path)
+            print(f"   ✅ 已保存: {image_path.name}")
+        
         return {
             "prompts": image_prompts_with_role_desc,
             "generation_results": images,

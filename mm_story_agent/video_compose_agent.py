@@ -229,7 +229,6 @@ def add_slide_effect(clips, slide_duration):
 def compose_video(story_dir: Union[str, Path],
                   save_path: Union[str, Path],
                   captions: List,
-                  music_path: Union[str, Path],
                   num_pages: int,
                   fps: int = 10,
                   audio_sample_rate: int = 16000,
@@ -239,9 +238,11 @@ def compose_video(story_dir: Union[str, Path],
                   slide_duration: float = 0.4,
                   zoom_speed: float = 0.5,
                   move_ratio: float = 0.95,
-                  sound_volume: float = 0.2,
-                  music_volume: float = 0.2,
-                  bg_speech_ratio: float = 0.4):
+                  # 移除音效和音乐相关参数
+                  # sound_volume: float = 0.2,
+                  # music_volume: float = 0.2,
+                  # bg_speech_ratio: float = 0.4
+                  ):
     if not isinstance(story_dir, Path):
         story_dir = Path(story_dir)
 
@@ -259,40 +260,51 @@ def compose_video(story_dir: Union[str, Path],
         slide_silence = AudioArrayClip(np.zeros((int(audio_sample_rate * slide_duration), 2)), fps=audio_sample_rate)
         fade_silence = AudioArrayClip(np.zeros((int(audio_sample_rate * fade_duration), 2)), fps=audio_sample_rate)
 
+        # 检查是否有语音文件
+        has_speech = False
+        speech_file = None
+        
         if (speech_dir / f"p{page}.wav").exists(): # single speech file
+            has_speech = True
             single_utterance = True
             speech_file = (speech_dir / f"./p{page}.wav").__str__()
             speech_clip = AudioFileClip(speech_file, fps=audio_sample_rate)
-            # speech_clip = speech_clip.audio_fadein(fade_duration)
-            
             speech_clip = concatenate_audioclips([fade_silence, speech_clip, fade_silence])
-        else: # multiple speech files
-            single_utterance = False
+        else: # multiple speech files or no speech
             speech_files = list(speech_dir.glob(f"p{page}_*.wav"))
-            speech_files = sorted(speech_files, key=lambda x: int(x.stem.split("_")[-1]))
-            speech_clips = []
-            for utt_idx, speech_file in enumerate(speech_files):
-                speech_clip = AudioFileClip(speech_file.__str__(), fps=audio_sample_rate)
-                # add multiple timestamps of the same speech clip
-                if utt_idx == 0:
-                    timestamps.append([cur_duration + fade_duration,
-                                       cur_duration + fade_duration + speech_clip.duration])
-                    cur_duration += speech_clip.duration + fade_duration
-                elif utt_idx == len(speech_files) - 1:
-                    timestamps.append([
-                        cur_duration,
-                        cur_duration + speech_clip.duration
-                    ])
-                    cur_duration += speech_clip.duration + fade_duration + slide_duration
-                else:
-                    timestamps.append([
-                        cur_duration,
-                        cur_duration + speech_clip.duration
-                    ])
-                    cur_duration += speech_clip.duration
-                speech_clips.append(speech_clip)
-            speech_clip = concatenate_audioclips([fade_silence] + speech_clips + [fade_silence])
-            speech_file = speech_files[0] # for energy calculation
+            if len(speech_files) > 0:  # 有多个语音文件
+                has_speech = True
+                single_utterance = False
+                speech_files = sorted(speech_files, key=lambda x: int(x.stem.split("_")[-1]))
+                speech_clips = []
+                for utt_idx, speech_file in enumerate(speech_files):
+                    speech_clip = AudioFileClip(speech_file.__str__(), fps=audio_sample_rate)
+                    # add multiple timestamps of the same speech clip
+                    if utt_idx == 0:
+                        timestamps.append([cur_duration + fade_duration,
+                                           cur_duration + fade_duration + speech_clip.duration])
+                        cur_duration += speech_clip.duration + fade_duration
+                    elif utt_idx == len(speech_files) - 1:
+                        timestamps.append([
+                            cur_duration,
+                            cur_duration + speech_clip.duration
+                        ])
+                        cur_duration += speech_clip.duration + fade_duration + slide_duration
+                    else:
+                        timestamps.append([
+                            cur_duration,
+                            cur_duration + speech_clip.duration
+                        ])
+                        cur_duration += speech_clip.duration
+                    speech_clips.append(speech_clip)
+                speech_clip = concatenate_audioclips([fade_silence] + speech_clips + [fade_silence])
+                speech_file = speech_files[0].__str__() # for energy calculation
+            else:  # 没有语音文件，使用默认时长（5秒）
+                has_speech = False
+                single_utterance = True
+                default_duration = 5.0  # 默认每页5秒
+                speech_clip = AudioArrayClip(np.zeros((int(audio_sample_rate * default_duration), 2)), fps=audio_sample_rate)
+                speech_clip = concatenate_audioclips([fade_silence, speech_clip, fade_silence])
         
         # add slide silence
         if page == 1:
@@ -311,8 +323,12 @@ def compose_video(story_dir: Union[str, Path],
                                    cur_duration + speech_clip.duration - fade_duration - slide_duration])
                 cur_duration += speech_clip.duration - slide_duration
 
-        speech_array, _ = librosa.core.load(speech_file, sr=None)
-        speech_rms = librosa.feature.rms(y=speech_array)[0].mean()
+        # 只有在有语音文件时才计算 RMS
+        if has_speech and speech_file:
+            speech_array, _ = librosa.core.load(speech_file, sr=None)
+            speech_rms = librosa.feature.rms(y=speech_array)[0].mean()
+        else:
+            speech_rms = 0.01  # 默认值
 
         # set image as the main content, align the duration
         image_file = (image_dir / f"./p{page}.png").__str__()        
@@ -333,21 +349,22 @@ def compose_video(story_dir: Union[str, Path],
                 direction = "right"
             image_clip = add_move_effect(image_clip, direction=direction, move_raito=move_ratio)
 
-        # sound track
-        sound_file = sound_dir / f"p{page}.wav"
-        if sound_file.exists():
-            sound_clip = AudioFileClip(sound_file.__str__(), fps=audio_sample_rate)
-            sound_clip = sound_clip.audio_fadein(fade_duration)
-            if sound_clip.duration < speech_clip.duration:
-                sound_clip = audio_loop(sound_clip, duration=speech_clip.duration)
-            else:
-                sound_clip = sound_clip.subclip(0, speech_clip.duration)
-            sound_array, _ = librosa.core.load(sound_file.__str__(), sr=None)
-            sound_rms = librosa.feature.rms(y=sound_array)[0].mean()
-            ratio = speech_rms / sound_rms * bg_speech_ratio
-            audio_clip = CompositeAudioClip([speech_clip, sound_clip.volumex(sound_volume * ratio).audio_fadeout(fade_duration)])
-        else:
-            audio_clip = speech_clip
+        # sound track - 已禁用音效功能
+        # sound_file = sound_dir / f"p{page}.wav"
+        # if sound_file.exists():
+        #     sound_clip = AudioFileClip(sound_file.__str__(), fps=audio_sample_rate)
+        #     sound_clip = sound_clip.audio_fadein(fade_duration)
+        #     if sound_clip.duration < speech_clip.duration:
+        #         sound_clip = audio_loop(sound_clip, duration=speech_clip.duration)
+        #     else:
+        #         sound_clip = sound_clip.subclip(0, speech_clip.duration)
+        #     sound_array, _ = librosa.core.load(sound_file.__str__(), sr=None)
+        #     sound_rms = librosa.feature.rms(y=sound_array)[0].mean()
+        #     ratio = speech_rms / sound_rms * bg_speech_ratio
+        #     audio_clip = CompositeAudioClip([speech_clip, sound_clip.volumex(sound_volume * ratio).audio_fadeout(fade_duration)])
+        # else:
+        #     audio_clip = speech_clip
+        audio_clip = speech_clip
 
         video_clip = image_clip.set_audio(audio_clip)        
         video_clips.append(video_clip)
@@ -356,30 +373,32 @@ def compose_video(story_dir: Union[str, Path],
 
     # final_clip = concatenate_videoclips(video_clips, method="compose")
     composite_clip = add_slide_effect(video_clips, slide_duration=slide_duration)
-    composite_clip = add_bottom_black_area(composite_clip, black_area_height=caption_config["area_height"])
-    del caption_config["area_height"]
-    max_caption_length = caption_config["max_length"]
-    del caption_config["max_length"]
-    composite_clip = add_caption(
-        captions,
-        story_dir / "captions.srt",
-        timestamps,
-        composite_clip,
-        max_caption_length,
-        **caption_config
-    )
+    
+    # 临时禁用字幕功能（需要 ImageMagick）
+    # composite_clip = add_bottom_black_area(composite_clip, black_area_height=caption_config["area_height"])
+    # del caption_config["area_height"]
+    # max_caption_length = caption_config["max_length"]
+    # del caption_config["max_length"]
+    # composite_clip = add_caption(
+    #     captions,
+    #     story_dir / "captions.srt",
+    #     timestamps,
+    #     composite_clip,
+    #     max_caption_length,
+    #     **caption_config
+    # )
 
-    # add music track, align the duration
-    music_clip = AudioFileClip(music_path.__str__(), fps=audio_sample_rate)
-    music_array, _ = librosa.core.load(music_path.__str__(), sr=None)
-    music_rms = librosa.feature.rms(y=music_array)[0].mean()
-    ratio = speech_rms / music_rms * bg_speech_ratio
-    if music_clip.duration < composite_clip.duration:
-        music_clip = audio_loop(music_clip, duration=composite_clip.duration)
-    else:
-        music_clip = music_clip.subclip(0, composite_clip.duration)
-    all_audio_clip = CompositeAudioClip([composite_clip.audio, music_clip.volumex(music_volume * ratio)])
-    composite_clip = composite_clip.set_audio(all_audio_clip)
+    # add music track - 已禁用音乐功能
+    # music_clip = AudioFileClip(music_path.__str__(), fps=audio_sample_rate)
+    # music_array, _ = librosa.core.load(music_path.__str__(), sr=None)
+    # music_rms = librosa.feature.rms(y=music_array)[0].mean()
+    # ratio = speech_rms / music_rms * bg_speech_ratio
+    # if music_clip.duration < composite_clip.duration:
+    #     music_clip = audio_loop(music_clip, duration=composite_clip.duration)
+    # else:
+    #     music_clip = music_clip.subclip(0, composite_clip.duration)
+    # all_audio_clip = CompositeAudioClip([composite_clip.audio, music_clip.volumex(music_volume * ratio)])
+    # composite_clip = composite_clip.set_audio(all_audio_clip)
     
     composite_clip.write_videofile(save_path.__str__(),
                                    audio_fps=audio_sample_rate,
@@ -409,7 +428,6 @@ class SlideshowVideoComposeAgent:
             story_dir=Path(params["story_dir"]),
             save_path=Path(params["story_dir"]) / "output.mp4",
             captions=pages,
-            music_path=Path(params["story_dir"]) / "music/music.wav",
             num_pages=len(pages),
             fps=params["fps"],
             audio_sample_rate=params["audio_sample_rate"],

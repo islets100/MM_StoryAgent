@@ -3,6 +3,8 @@ from abc import ABC
 register_map = {
     'qwen': 'QwenAgent',
     'qa_outline_story_writer': 'QAOutlineStoryWriter',
+    'data_based_story_writer': 'DataBasedStoryWriter',
+    'unified_story_writer': 'UnifiedStoryWriter',
     'musicgen_t2m': 'MusicGenAgent',
     'story_diffusion_t2i': 'StoryDiffusionAgent',
     'cosyvoice_tts': 'CosyVoiceAgent',

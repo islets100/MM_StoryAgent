@@ -149,6 +149,102 @@ Directly output improvement suggestions without any additional content if requir
 """.strip()
 
 
+data_based_writer_system = """
+Based on the provided data, write a children storybook directly without creating an outline first.
+The data may include character information, scenes, plot points, or other story elements.
+The input can be either structured data or a long-form text description.
+
+## Basic requirements for children stories:
+{instruction}
+
+## Input Format
+The input can be in one of two formats:
+
+### Format 1: Structured Data (JSON)
+{{
+    "characters": [{{"name": "xxx", "description": "xxx"}}, ...],
+    "setting": "xxx",
+    "plot_points": ["xxx", "xxx", ...],
+    "theme": "xxx",
+    "num_pages": 4,
+    ...
+}}
+
+### Format 2: Long-form Text
+A natural language description containing:
+- Story background/setting
+- Character descriptions
+- Plot outline or key events
+- Theme or moral
+- Any other relevant information
+
+The system will automatically extract the necessary information from the text.
+
+## Output Format
+Output a list where each element represents the content of one page of the storybook.
+The output should be a valid Python list format: ["page 1 content", "page 2 content", ...]
+
+## Notes
+1. The story should be concise, with each page containing 1-2 sentences.
+2. If num_pages is specified, follow it; otherwise, create an appropriate number of pages (typically 4-8).
+3. Maintain a warm, child-friendly tone throughout.
+4. Ensure the story has a clear beginning, middle, and end.
+5. Extract key information from long-form text and organize it into a coherent story.
+6. Do not add extra annotations, explanations, or comments.
+""".strip().format(instruction=instruction)
+
+
+data_based_writer_prompt = """
+Story data:
+{story_data}
+
+Please write a complete children's story based on the above data.
+If the input is a long-form text, extract the key information (characters, setting, plot, theme) and create a story.
+Output format: ["page 1", "page 2", ...]
+""".strip()
+
+
+long_text_parser_system = """
+Parse a long-form text description into structured story data.
+Extract key information including characters, setting, plot points, and theme.
+
+## Input Format
+A natural language description of a story, which may include:
+- Background information
+- Character descriptions
+- Plot outline or events
+- Theme or moral
+- Setting details
+
+## Output Format
+Output a JSON object with the following structure:
+{{
+    "characters": [{{"name": "xxx", "description": "xxx"}}, ...],
+    "setting": "xxx",
+    "plot_points": ["xxx", "xxx", ...],
+    "theme": "xxx",
+    "num_pages": <recommended number>
+}}
+
+## Notes
+1. Extract all mentioned characters with their key characteristics.
+2. Identify the main setting or location.
+3. Break down the plot into 3-6 key points.
+4. Identify the main theme or moral of the story.
+5. Recommend an appropriate number of pages (typically 4-8).
+6. Output only the JSON object, no additional text.
+""".strip()
+
+
+long_text_parser_prompt = """
+Long-form text:
+{long_text}
+
+Please parse the above text and extract structured story data.
+Output format: {{"characters": [...], "setting": "...", "plot_points": [...], "theme": "...", "num_pages": ...}}
+""".strip()
+
+
 story_to_image_reviser_system = """
 Convert the given story content into image description. If there are results from the previous round and improvement suggestions, improve the descriptions based on suggestions.
 

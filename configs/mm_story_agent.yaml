@@ -1,15 +1,60 @@
 story_dir: &story_dir generated_stories/example
 
 story_writer:
-    tool: qa_outline_story_writer
+    # 故事生成模式选择：
+    # 1. qa_outline_story_writer - 传统模式: Topic → Outline → Pages
+    # 2. data_based_story_writer - 数据驱动: Data → Pages (支持长文本)
+    # 3. unified_story_writer - 统一接口，通过 mode 参数切换
+    tool: unified_story_writer
     cfg:
+        # 模式选择: "qa_outline" 或 "data_based"
+        mode: data_based
+        llm: qwen
+        temperature: 0.5
+        # QA-Outline 模式参数
         max_conv_turns: 3
         num_outline: 4
-        temperature: 0.5
+        # Data-Based 模式参数
+        max_retries: 3
     params:
+        # ========== QA-Outline 模式参数 ==========
+        # 当 mode=qa_outline 时使用以下参数
         story_topic: "Time Management: A child learning how to manage their time effectively."
         main_role: "(no main role specified)"
         scene: "(no scene specified)"
+        
+        # ========== Data-Based 模式参数 ==========
+        # 当 mode=data_based 时使用以下参数
+        # 支持长文本输入，可以直接粘贴完整的故事背景、角色设定等
+        long_text: |
+            故事背景：
+            在一个繁忙的城市里，有一个名叫小明的孩子，他总是觉得时间不够用。
+            每天放学后，他要做作业、练琴、运动，还想玩游戏、看动画片。
+            小明常常感到很焦虑，因为他不知道如何安排这些事情。
+            
+            角色设定：
+            - 小明：一个8岁的小男孩，活泼好动，但容易分心
+            - 妈妈：温柔耐心，善于引导孩子
+            - 时间精灵：一个会说话的小闹钟，可以帮助小明管理时间
+            
+            故事主题：
+            通过时间精灵的帮助，小明学会了制定计划、设置优先级，
+            最终找到了平衡学习和娱乐的方法，变得更加自信和快乐。
+        
+        # 或者使用结构化数据格式（两种格式二选一）
+        characters:
+            - name: "小明"
+              description: "一个8岁的小男孩，活泼好动但容易分心"
+            - name: "时间精灵"
+              description: "一个会说话的小闹钟，帮助孩子管理时间"
+        setting: "繁忙的城市，小明的家和学校"
+        plot_points:
+            - "小明总是觉得时间不够用，很焦虑"
+            - "时间精灵出现，教小明制定计划"
+            - "小明学会设置优先级和时间分配"
+            - "小明成功平衡学习和娱乐，变得快乐自信"
+        theme: "时间管理和自我规划"
+        num_pages: 3  # 改为3页，加快生成速度
 
 sound_generation:
     tool: audioldm2_t2a
@@ -36,13 +81,18 @@ image_generation:
     tool: story_diffusion_t2i
     cfg:
         num_turns: 3
-        model_name: stabilityai/stable-diffusion-xl-base-1.0
+        # 图像生成模式选择：
+        # 1. 使用 DashScope API: model_name: wanx-v1 (推荐，无需GPU)
+        # 2. 使用本地模型: model_name: stabilityai/stable-diffusion-xl-base-1.0 (需要GPU)
+        model_name: wanx-v1  # 或 stabilityai/stable-diffusion-xl-base-1.0
+        use_api: true  # true=使用API, false=使用本地模型 (model_name为wanx-v1时自动启用)
+        # api_key: sk-xxx  # 可选，不设置则从环境变量 DASHSCOPE_API_KEY 读取
         id_length: 2
         height: &image_height 512
         width: &image_width 1024
     params:
         seed: 112536
-        guidance_scale: 10.0
+        guidance_scale: 10.0  # 仅本地模型使用
         style_name: "Storybook" # ['(No style)', 'Japanese Anime', 'Digital/Oil Painting', 'Pixar/Disney Character', 
                                 #  'Photographic', 'Comic book', 'Line art', 'Black and White Film Noir', 'Isometric Rooms']
 
@@ -75,9 +125,10 @@ video_compose:
             # stroke_width: 0.5
             max_length: 50
         slideshow_effect:
-            bg_speech_ratio: 0.6
-            sound_volume: 0.6
-            music_volume: 0.5
+            # 音频相关参数已禁用
+            # bg_speech_ratio: 0.6
+            # sound_volume: 0.6
+            # music_volume: 0.5
             fade_duration: 0.8
             slide_duration: 0.4
             zoom_speed: 0.5
